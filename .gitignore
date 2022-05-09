@@ -3,3 +3,6 @@ output/
 old/
 trained/
 eval/
+.idea/
+eval_text/
+train_text/
