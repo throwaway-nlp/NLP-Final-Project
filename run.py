@@ -1,6 +1,6 @@
 import datasets
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, \
-    AutoModelForQuestionAnswering, Trainer, TrainingArguments, HfArgumentParser
+    AutoModelForQuestionAnswering, Trainer, TrainingArguments, HfArgumentParser, EvalPrediction
 from helpers import prepare_dataset_nli, prepare_train_dataset_qa, \
     prepare_validation_dataset_qa, QuestionAnsweringTrainer, compute_accuracy
 import os
@@ -173,7 +173,6 @@ def main():
 
     if training_args.do_eval:
         results = trainer.evaluate(**eval_kwargs)
-
         # To add custom metrics, you should replace the "compute_metrics" function (see comments above).
         #
         # If you want to change how predictions are computed, you should subclass Trainer and override the "prediction_step"
@@ -182,8 +181,8 @@ def main():
         # values that it returns.
 
         print('Evaluation results:')
-        print(results)
-
+        print('em:', results['eval_exact_match'])
+        print('f1:', results['eval_f1'])
         os.makedirs(training_args.output_dir, exist_ok=True)
 
         with open(os.path.join(training_args.output_dir, 'eval_metrics.json'), encoding='utf-8', mode='w') as f:
@@ -214,6 +213,31 @@ def main():
                         f.write(json.dumps(example_with_prediction))
                         f.write('\n')
 
+        # train_dataset = dataset['train']
+        # if args.max_train_samples:
+        #     train_dataset = train_dataset.select(range(args.max_train_samples))
+        # train_dataset_featurized = train_dataset.map(
+        #     prepare_eval_dataset,
+        #     batched=True,
+        #     num_proc=NUM_PREPROCESSING_WORKERS,
+        #     remove_columns=train_dataset.column_names
+        # )
+        # trainer = trainer_class(
+        #     model=model,
+        #     args=training_args,
+        #     train_dataset=train_dataset_featurized,
+        #     eval_dataset=train_dataset_featurized,
+        #     tokenizer=tokenizer,
+        #     compute_metrics=compute_metrics_and_store_predictions,
+        #     shuffle_prob=args.shuffle
+        # )
+        # trainer.tokenizer2 = tokenizer2
+        # eval_kwargs['eval_examples'] = train_dataset
+        # results = trainer.evaluate(**eval_kwargs)
+        # with open(os.path.join(training_args.output_dir, 'train_metrics.json'), encoding='utf-8', mode='w+') as f:
+        #     json.dump(results, f)
+        # print('em:', results['eval_exact_match'])
+        # print('f1:', results['eval_f1'])
 
 if __name__ == "__main__":
     main()

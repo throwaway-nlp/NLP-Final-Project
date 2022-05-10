@@ -271,7 +271,7 @@ def in_sentence(context, answer_char_start):
     for i in range(len(c)):
         end = start + len(c[i]) + 1
         if start <= answer_char_start < end:
-            return i, len(c)
+            return i + 1, len(c)
         start += len(c[i]) + 1
     return -1, len(c)
 
@@ -325,19 +325,34 @@ class QuestionAnsweringTrainer(Trainer):
                           for ex in eval_examples]
 
             actual_answers = []
-            predicted_answers = []
+            corrected_answers = []
+            predicted_answers_w = []
+            predicted_answers_c = []
             lengths = []
+            total = 0
+            same = 0
+            diff = []
             for ex, p in zip(eval_examples, formatted_predictions):
                 actual_answers.append([])
+                context = ex['context']
                 answers_start = ex['answers']['answer_start']
                 for i in range(len(answers_start)):
                     a_start = answers_start[i]
-                    context = ex['context']
                     actual_sentence, _ = in_sentence(context, a_start)
                     actual_answers[-1].append(actual_sentence)
                 predicted_answer = p['prediction_text']
-                predicted_sentence, _ = in_sentence(context, context.index(predicted_answer))
-                predicted_answers.append(predicted_sentence)
+                j = context.index(predicted_answer)
+                predicted_sentence, _ = in_sentence(context, j)
+                if predicted_answer in ex['answers']['text']:
+                    predicted_answers_c.append(predicted_sentence)
+                else:
+                    if predicted_sentence in actual_answers[-1]:
+                        same += 1
+                    else:
+                        diff.append(predicted_sentence)
+                    total += 1
+                    predicted_answers_w.append(predicted_sentence)
+                    corrected_answers.append(np.mean(np.array(actual_answers[-1])))
                 lengths.append(_)
 
             # compute the metrics according to the predictions and references
@@ -345,9 +360,16 @@ class QuestionAnsweringTrainer(Trainer):
                 EvalPrediction(predictions=formatted_predictions,
                                label_ids=references),
             )
+            print(same)
+            print(total)
+            print(same / total)
+            print(np.mean(np.array(diff)))
             metrics['answer_sentences'] = actual_answers
-            metrics['predicted_answers'] = predicted_answers
+            metrics['predicted_answers_c'] = predicted_answers_c
+            metrics['predicted_answers_w'] = predicted_answers_w
+            metrics['corrected_answers'] = corrected_answers
             metrics['lengths'] = lengths
+            metrics['misc'] = [same, total, same/total, np.mean(np.array(diff))]
             # Prefix all keys with metric_key_prefix + '_'
             for key in list(metrics.keys()):
                 if not key.startswith(f"{metric_key_prefix}_"):
@@ -361,90 +383,90 @@ class QuestionAnsweringTrainer(Trainer):
                                                          self.control, metrics)
         return metrics
 
-    # def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
-    #     """
-    #     Perform a training step on a batch of inputs.
-    #
-    #     Subclass and override to inject custom behavior.
-    #
-    #     Args:
-    #         model (`nn.Module`):
-    #             The model to train.
-    #         inputs (`Dict[str, Union[torch.Tensor, Any]]`):
-    #             The inputs and targets of the model.
-    #
-    #             The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
-    #             argument `labels`. Check your model's documentation for all accepted arguments.
-    #
-    #     Return:
-    #         `torch.Tensor`: The tensor with training loss on this batch.
-    #     """
-    #     model.train()
-    #     inputs = self._prepare_inputs(inputs)
-    #     if self.shuffle_prob != 0 and self.state.epoch >= 1.0:
-    #         self.start_shuffling = True
-    #     if self.start_shuffling:
-    #         self.shuffle_context(inputs)
-    #
-    #     if is_sagemaker_mp_enabled():
-    #         scaler = self.scaler if self.do_grad_scaling else None
-    #         loss_mb = smp_forward_backward(model, inputs, self.args.gradient_accumulation_steps, scaler=scaler)
-    #         return loss_mb.reduce_mean().detach().to(self.args.device)
-    #
-    #     with self.autocast_smart_context_manager():
-    #         loss = self.compute_loss(model, inputs)
-    #
-    #     if self.args.n_gpu > 1:
-    #         loss = loss.mean()  # mean() to average on multi-gpu parallel training
-    #
-    #     if self.args.gradient_accumulation_steps > 1 and not self.deepspeed:
-    #         # deepspeed handles loss scaling by gradient_accumulation_steps in its `backward`
-    #         loss = loss / self.args.gradient_accumulation_steps
-    #
-    #     if self.do_grad_scaling:
-    #         self.scaler.scale(loss).backward()
-    #     elif self.use_apex:
-    #         with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-    #             scaled_loss.backward()
-    #     elif self.deepspeed:
-    #         # loss gets scaled under gradient_accumulation_steps in deepspeed
-    #         loss = self.deepspeed.backward(loss)
-    #     else:
-    #         loss.backward()
-    #
-    #     return loss.detach()
-    #
-    # def find_new_answer(self, context, answer):
-    #     for i in range(len(context)):
-    #         if context[i:i + len(answer)] == answer:
-    #             return i
-    #     return -1
-    #
-    # def shuffle_context(self, inputs):
-    #     for i in range(len(inputs["input_ids"])):
-    #         input_ids = inputs["input_ids"][i]
-    #         start = inputs['start_positions'][i].item()
-    #         end = inputs['end_positions'][i].item()
-    #         labeled_answer = input_ids[start: end + 1]
-    #         # only shuffle if no period (sentence seperator) in answer
-    #         if '.' not in self.tokenizer2.decode(labeled_answer):
-    #             if random.random() <= self.shuffle_prob:
-    #                 token_start_index = 0
-    #                 while input_ids[token_start_index] != self.tokenizer.sep_token_id:
-    #                     token_start_index += 1
-    #                 token_end_index = token_start_index + 1
-    #                 while input_ids[token_end_index] != self.tokenizer.sep_token_id:
-    #                     token_end_index += 1
-    #                 context = self.tokenizer2.decode(input_ids[token_start_index + 1:token_end_index])
-    #                 context = re.split(self.PATTERN, context)
-    #                 random.shuffle(context)
-    #                 context = ' '.join(context)
-    #                 context = torch.tensor(self.tokenizer2.encode(context)).to(input_ids.device)[1:-1]
-    #                 new_answer_index = self.find_new_answer(context.tolist(), labeled_answer.tolist())
-    #                 if new_answer_index != -1:
-    #                     inputs["input_ids"][i][token_start_index + 1: token_end_index] = context
-    #                     inputs['start_positions'][i] = token_start_index + new_answer_index + 1
-    #                     inputs['end_positions'][i] = inputs['start_positions'][i] + (end - start)
-    #
-    #
-    #
+    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
+        """
+        Perform a training step on a batch of inputs.
+
+        Subclass and override to inject custom behavior.
+
+        Args:
+            model (`nn.Module`):
+                The model to train.
+            inputs (`Dict[str, Union[torch.Tensor, Any]]`):
+                The inputs and targets of the model.
+
+                The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
+                argument `labels`. Check your model's documentation for all accepted arguments.
+
+        Return:
+            `torch.Tensor`: The tensor with training loss on this batch.
+        """
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+        if self.shuffle_prob != 0 and self.state.epoch >= 1.0:
+            self.start_shuffling = True
+        if self.start_shuffling:
+            self.shuffle_context(inputs)
+
+        if is_sagemaker_mp_enabled():
+            scaler = self.scaler if self.do_grad_scaling else None
+            loss_mb = smp_forward_backward(model, inputs, self.args.gradient_accumulation_steps, scaler=scaler)
+            return loss_mb.reduce_mean().detach().to(self.args.device)
+
+        with self.autocast_smart_context_manager():
+            loss = self.compute_loss(model, inputs)
+
+        if self.args.n_gpu > 1:
+            loss = loss.mean()  # mean() to average on multi-gpu parallel training
+
+        if self.args.gradient_accumulation_steps > 1 and not self.deepspeed:
+            # deepspeed handles loss scaling by gradient_accumulation_steps in its `backward`
+            loss = loss / self.args.gradient_accumulation_steps
+
+        if self.do_grad_scaling:
+            self.scaler.scale(loss).backward()
+        elif self.use_apex:
+            with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                scaled_loss.backward()
+        elif self.deepspeed:
+            # loss gets scaled under gradient_accumulation_steps in deepspeed
+            loss = self.deepspeed.backward(loss)
+        else:
+            loss.backward()
+
+        return loss.detach()
+
+    def find_new_answer(self, context, answer):
+        for i in range(len(context)):
+            if context[i:i + len(answer)] == answer:
+                return i
+        return -1
+
+    def shuffle_context(self, inputs):
+        for i in range(len(inputs["input_ids"])):
+            input_ids = inputs["input_ids"][i]
+            start = inputs['start_positions'][i].item()
+            end = inputs['end_positions'][i].item()
+            labeled_answer = input_ids[start: end + 1]
+            # only shuffle if no period (sentence seperator) in answer
+            if '.' not in self.tokenizer2.decode(labeled_answer):
+                if random.random() <= self.shuffle_prob:
+                    token_start_index = 0
+                    while input_ids[token_start_index] != self.tokenizer.sep_token_id:
+                        token_start_index += 1
+                    token_end_index = token_start_index + 1
+                    while input_ids[token_end_index] != self.tokenizer.sep_token_id:
+                        token_end_index += 1
+                    context = self.tokenizer2.decode(input_ids[token_start_index + 1:token_end_index])
+                    context = re.split(self.PATTERN, context)
+                    random.shuffle(context)
+                    context = ' '.join(context)
+                    context = torch.tensor(self.tokenizer2.encode(context)).to(input_ids.device)[1:-1]
+                    new_answer_index = self.find_new_answer(context.tolist(), labeled_answer.tolist())
+                    if new_answer_index != -1:
+                        inputs["input_ids"][i][token_start_index + 1: token_end_index] = context
+                        inputs['start_positions'][i] = token_start_index + new_answer_index + 1
+                        inputs['end_positions'][i] = inputs['start_positions'][i] + (end - start)
+
+
+
